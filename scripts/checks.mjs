@@ -197,13 +197,24 @@ async function ecAddresses() {
     : ok("ec-addresses", `${Object.keys(PUBLISHED_ADDRESSES).length} match`);
 }
 
-/** The SDK floor the event-contract docs promise. */
+/**
+ * The SDK floor.
+ *
+ * 0.23.0 is a hard floor, not a preference: the indexer dropped the
+ * `longOpenInterest` column that 0.22 and below still select, so every market
+ * read fails outright on those. The old rule allowed anything from 0.20, which
+ * would have passed a pin straight into that.
+ */
+const SDK_FLOOR = [0, 23, 0];
+
 async function sdkFloor() {
   const pkg = JSON.parse(await read("packages/ec-core/package.json"));
   const raw = pkg.dependencies?.["@somnia-chain/markets-sdk"] ?? "";
   const m = String(raw).match(/(\d+)\.(\d+)\.(\d+)/);
-  const meets = m && (Number(m[1]) > 0 || Number(m[2]) >= 20);
-  return meets ? ok("sdk-floor", raw) : bad("sdk-floor", `need >= 0.20.0, got ${raw || "(missing)"}`);
+  if (!m) return bad("sdk-floor", `need >= ${SDK_FLOOR.join(".")}, got ${raw || "(missing)"}`);
+  const got = m.slice(1, 4).map(Number);
+  const cmp = got[0] - SDK_FLOOR[0] || got[1] - SDK_FLOOR[1] || got[2] - SDK_FLOOR[2];
+  return cmp >= 0 ? ok("sdk-floor", raw) : bad("sdk-floor", `need >= ${SDK_FLOOR.join(".")}, got ${raw}`);
 }
 
 /**
