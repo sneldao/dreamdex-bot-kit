@@ -138,9 +138,11 @@ export async function placeLimit(ctx: EcContext, args: PlaceLimitArgs): Promise<
     expireTimestampNs: BigInt(expiresAt) * 1_000_000_000n,
   });
 
-  // A post-only that would have crossed is REJECTED, not reverted: the write
-  // succeeds and simply rests nothing. Anything else that fails is a real
-  // revert and should stop the caller.
+  // A post-only that would have crossed REVERTS with `PostOnlyWouldCross()`, so
+  // the call above throws and this line is never reached in that case. On a
+  // quoting loop that is a routine event, not a fault: the touch moved through
+  // your price between the read and the send. Catch it around `placeLimit` and
+  // requote, and let anything else propagate.
   assertTxOk(res, `${SIDES[`${outcome}-${side}`]} ${market.symbol}`);
 
   const filledRaw = (res.fills ?? []).reduce((acc, f) => acc + f.quantityFilled, 0n);
