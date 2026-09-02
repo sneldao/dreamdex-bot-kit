@@ -64,20 +64,25 @@ export function inVenue(scope: VenueScope, market: UnifiedMarket): boolean {
  * manifest's "active" venue disagrees with where the live markets actually are.
  * If live markets span several venues we throw rather than silently trade a
  * venue you didn't mean.
+ *
+ * Pass `opts.scope` to override the .env-derived scope, e.g. to keep using the
+ * venue `resolveVenue` inferred for the rest of a run.
  */
 export async function activeMarkets(
   ctx: EcContext,
-  opts: { asset?: string; max?: number } = {},
+  opts: { asset?: string; max?: number; scope?: VenueScope } = {},
 ): Promise<UnifiedMarket[]> {
   const { config } = ctx;
   const all = Object.values(await ctx.exchange.loadMarkets(true));
   let live = all.filter((m) => m.type === "binary" && m.active);
 
-  const scope: VenueScope = config.venueId
-    ? { venueId: config.venueId }
-    : config.operatorId !== undefined
-      ? { operatorId: config.operatorId }
-      : {};
+  const scope: VenueScope =
+    opts.scope ??
+    (config.venueId
+      ? { venueId: config.venueId }
+      : config.operatorId !== undefined
+        ? { operatorId: config.operatorId }
+        : {});
 
   if (scope.venueId || scope.operatorId !== undefined) {
     live = live.filter((m) => inVenue(scope, m));
