@@ -54,7 +54,7 @@ async function printWallet(
   }
   const normalized = pk.startsWith("0x") ? pk : `0x${pk}`;
   const addr = privateKeyToAccount(normalized as `0x${string}`).address;
-  const pc = ctx.exchange.client.publicClient;
+  const pc = ctx.exchange.client.getViemClient();
   const native = await pc.getBalance({ address: addr });
   const { config } = ctx;
   const collateral = config.addresses.collateral ?? config.addresses.testUsdc;
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   await printWallet("PRIVATE_KEY", process.env.PRIVATE_KEY, ctx);
   await printWallet("TAKER_KEY", process.env.TAKER_PRIVATE_KEY, ctx);
 
-  const markets = await activeMarkets(ctx, { max: 12 });
+  const markets = await activeMarkets(ctx, { max: 12, scope: resolved.scope });
   console.log(`\nmarkets   : showing up to ${markets.length} scoped row(s)\n`);
 
   const nowSec = Math.floor(Date.now() / 1000);
