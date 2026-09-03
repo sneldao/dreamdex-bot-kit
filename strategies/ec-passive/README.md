@@ -13,8 +13,8 @@ Env: `PRIVATE_KEY` (funded), `DEPLOY_ENV` (`testnet` default), `EC_SIDE`
 (`up`|`down`), `EC_TARGET` (default 0.40), `EC_SIZE` (per-order shares),
 `EC_MAX_POSITION` (stop accumulating, per window), `EC_UNDERLYING` (e.g.
 `BTC`, empty = any), `EC_REFRESH_MS`, `EC_MIN_LEFT_S` (pins the
-headroom; by default it scales to 40% of the window, so a 1h series needs 24min
-left and a 5m series needs 2min), `DRY_RUN`.
+headroom; by default it scales to 40% of the window capped at 10 minutes, so a
+1h series needs 10min left, a 15m series 6min, and a 5m series 2min), `DRY_RUN`.
 
 What it demonstrates beyond the starter:
 
