@@ -136,3 +136,93 @@ market table has the correct per-token decimals.
 **Symptom:** you quote/cross against a price that's already gone.
 **Fix:** treat REST snapshots as approximate; for anything price-sensitive, read `getBookLevels`
 on-chain (the strategies do), and periodically reconcile your WS view against it.
+
+---
+
+## Event Contracts (binary markets)
+
+The sixteen above are the spot and perp surface. A binary pool is a different contract with its
+own set, and every one of these was hit by a real vault quoting Event Contracts on Shannon. Each
+entry links to the issue carrying its reproduction.
+
+### 17. Binary order prices are scaled to the collateral's decimals
+
+**Symptom:** every order reverts and no revert mentions price. With a post-only order the sides
+fail differently: `PostOnlyWouldCross()` on `BUY_YES` and `SELL_NO`, `PriceOutOfBounds()` on
+`SELL_YES` and `BUY_NO`. With a plain limit order all four give `PriceOutOfBounds()`.
+**Cause:** a probability of 0.727 goes on the wire as `727000` against 6-decimal tUSDC and
+`727e15` against 18-decimal USDso. Both errors are truthful, since a price that large would cross
+the whole book on the bid side and is out of bounds on the ask side, which is why they send you
+looking at spreads and post-only semantics instead of at the scale.
+**Fix:** derive `priceOne` from the collateral's `decimals()`, never from a literal, and read the
+grid rather than assuming it. `getBinaryBookParams(pool)` returns `tickSize`, `lotSize` and
+`minQuantity` (`1e3` on testnet, `1e15` on mainnet), and the market row carries
+`precision.price = 3`. Once the scale is right the reverts turn honest:
+`ERC20InsufficientAllowance` on a buy, `InsufficientPermission` on a sell.
+([#26](https://github.com/somnia-chain/dreamdex-bot-kit/issues/26))
+
+### 18. `placeOrder` is exported on a binary pool and can never succeed
+
+**Symptom:** a compiling, type-checking call reverts with no reason data at all. Same for
+`getAutoPullRequirement` and `somiPaymentPerOrder`. An empty revert is indistinguishable from
+calling a function that does not exist, so there is nothing to decode and nothing to search for.
+**Cause:** `binaryPoolWriteAbi` exports the spot `placeOrder(bool isBid, ...)` next to
+`placeBinaryOrder(uint8 kind, ...)`, and autocomplete finds the familiar one first.
+**Fix:** `placeBinaryOrder` only, with `kind` 0 `BUY_YES`, 1 `SELL_YES`, 2 `BUY_NO`, 3 `SELL_NO`,
+and the price always quoted on the YES side.
+([#27](https://github.com/somnia-chain/dreamdex-bot-kit/issues/27))
+
+### 19. Redemption pulls through the module, not the pool
+
+**Symptom:** `redeem` or `mergeCompleteSet` reverts `InsufficientPermission()` (`0xdeda9030`),
+with nothing in the error saying which spender is missing.
+**Cause:** buying outcome tokens pulls nothing, because two crossing buys mint a fresh pair, so
+no ERC-6909 grant is needed until the one call that turns tokens back into collateral. The puller
+then is the markets module, not the pool the orders went to.
+**Fix:** `trader.redeem` already handles this: it grants the module as ERC-6909 operator before
+the call unless you pass `autoApprove: false`. You need the grant yourself only when you call the
+module directly or turn auto-approve off, and then it is
+`outcomeToken.setOperator(binaryMarketsModule, true)`, once, at construction rather than at
+settlement. By the time it reverts the window has resolved and left the live market list.
+([#32](https://github.com/somnia-chain/dreamdex-bot-kit/issues/32))
+
+### 20. `cancelOrder` reverts on a leg that already filled
+
+**Symptom:** cancelling both legs of a two-sided quote reverts `IncorrectSender()` (`0xf5e39c1f`)
+and takes the whole cleanup down with it.
+**Cause:** a filled id is no longer a live order the caller owns, and any id the caller does not
+own gives the same error.
+**Fix:** `try`/`catch` per leg. Note what this means: batch cleanup fails on exactly the shape
+that needs cleaning, one side filled and the other resting against a market that walked away.
+([#33](https://github.com/somnia-chain/dreamdex-bot-kit/issues/33))
+
+### 21. A pool freezes its whole book from expiry until the market is terminal
+
+**Symptom:** every cancel path (`cancelOrder`, `cancelOrders`, `cancelExpiredOrders`,
+`sweepExpiredAtLevel`) reverts `0x8afbce93`, `CloseNotCaptured()`, and escrow on an expired
+window is stuck. The selector decodes only against a current `contractErrorsAbi`; older SDK pins
+do not carry it, which is why the revert can look like nothing at all.
+**Cause:** the book is closed for the settlement window, which is when the close price is
+captured.
+**Fix:** do not expect to cancel between expiry and terminal. If the oracle never answers,
+`BinaryMarket.voidExpired()` opens at `expiry + settlementWindow` and is permissionless; called
+earlier it reverts `SettlementWindowOpen()`. It sits on the **market**, not among the module's
+keeper entries where you would look for it. `settlementWindow()` reads `300` on live markets
+today, so read it rather than assuming.
+([#40](https://github.com/somnia-chain/dreamdex-bot-kit/issues/40),
+[#39](https://github.com/somnia-chain/dreamdex-bot-kit/issues/39))
+
+### 22. BinaryPools are beacon proxies, so the running code can change under you
+
+**Symptom:** you read the pool implementation's source to explain a revert and it does not
+explain it. An `implementation()` staticcall appears in the internal trace of every pool call and
+looks like an access gate.
+**Cause:** a pool address holds 291 bytes of beacon proxy. It staticcalls `implementation()`
+(`0x5c60da1b`) on the beacon and delegatecalls the result. Through markets-sdk 0.28.1 the
+`binaryPoolImpl` constant pointed at 37,936 bytes the beacon no longer resolved to; 0.29.0
+corrected it, and it now matches the live implementation on both networks.
+**Fix:** resolve `implementation()` off the beacon before you read any source, and do not pin
+behaviour to a pool address or to a constant. The code behind a live position can change with no
+address change, and an error table generated against an older implementation decodes less than
+the chain emits.
+([#41](https://github.com/somnia-chain/dreamdex-bot-kit/issues/41))
